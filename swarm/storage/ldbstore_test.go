@@ -31,7 +31,6 @@ import (
 	ch "github.com/ethereum/go-ethereum/swarm/chunk"
 	"github.com/ethereum/go-ethereum/swarm/log"
 	"github.com/ethereum/go-ethereum/swarm/storage/mock/mem"
-
 	ldberrors "github.com/syndtr/goleveldb/leveldb/errors"
 )
 
@@ -103,6 +102,49 @@ func testDbStoreCorrect(n int, chunksize int64, mock bool, t *testing.T) {
 		t.Fatalf("init dbStore failed: %v", err)
 	}
 	testStoreCorrect(db, n, chunksize, t)
+}
+
+func TestMarkAccessed(t *testing.T) {
+	db, cleanup, err := newTestDbStore(false, true)
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("init dbStore failed: %v", err)
+	}
+
+	h := GenerateRandomChunk(ch.DefaultSize)
+
+	db.Put(context.Background(), h)
+
+	var indx dpaDBIndex
+	addr := h.Address()
+	idxk := getIndexKey(addr)
+
+	idata, err := db.db.Get(idxk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodeIndex(idata, &indx)
+
+	if indx.Access != 0 {
+		t.Fatalf("Expected the access index to be %d, but it is %d", 0, indx.Access)
+	}
+
+	found, c := db.MarkAccessed(addr)
+	if !found {
+		t.Fatal("Expected hash to be in db, but not found")
+	}
+	<-c
+
+	idata, err = db.db.Get(idxk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodeIndex(idata, &indx)
+
+	if indx.Access != 1 {
+		t.Fatalf("Expected the access index to be %d, but it is %d", 1, indx.Access)
+	}
+
 }
 
 func TestDbStoreRandom_1(t *testing.T) {

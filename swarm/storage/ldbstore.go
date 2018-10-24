@@ -194,6 +194,21 @@ func NewLDBStore(params *LDBStoreParams) (s *LDBStore, err error) {
 	return s, nil
 }
 
+// MarkAccessed increments the access counter for a chunk, so
+// the chunk won't get garbage collected.
+func (s *LDBStore) MarkAccessed(addr Address) (bool, chan struct{}) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if s.closed {
+		return false, nil
+	}
+
+	var indx dpaDBIndex
+	proximity := s.po(addr)
+	return s.tryAccessIdx(getIndexKey(addr), proximity, &indx)
+}
+
 // initialize and set values for processing of gc round
 func (s *LDBStore) startGC(c int) {
 
@@ -357,6 +372,7 @@ func (s *LDBStore) collectGarbage() error {
 			s.delete(s.gc.batch.Batch, index, keyIdx, po)
 			singleIterationCount++
 			s.gc.count++
+			log.Trace("garbage collect deleted chunk", "key", hash)
 
 			// break if target is not on max garbage batch boundary
 			if s.gc.count >= s.gc.target {
@@ -693,12 +709,7 @@ func (s *LDBStore) Put(ctx context.Context, chunk Chunk) error {
 	idata, err := s.db.Get(ikey)
 	if err != nil {
 		s.doPut(chunk, &index, po)
-	} else {
-		log.Debug("ldbstore.put: chunk already exists, only update access", "key", chunk.Address(), "po", po)
-		decodeIndex(idata, &index)
 	}
-	index.Access = s.accessCnt
-	s.accessCnt++
 	idata = encodeIndex(&index)
 	s.batch.Put(ikey, idata)
 
@@ -731,7 +742,8 @@ func (s *LDBStore) doPut(chunk Chunk, index *dpaDBIndex, po uint8) {
 	s.entryCnt++
 	dbEntryCount.Inc(1)
 	s.dataIdx++
-
+	index.Access = s.accessCnt
+	s.accessCnt++
 	cntKey := make([]byte, 2)
 	cntKey[0] = keyDistanceCnt
 	cntKey[1] = po
@@ -805,17 +817,17 @@ func newMockEncodeDataFunc(mockStore *mock.NodeStore) func(chunk Chunk) []byte {
 }
 
 // try to find index; if found, update access cnt and return true
-func (s *LDBStore) tryAccessIdx(ikey []byte, po uint8, index *dpaDBIndex) bool {
+func (s *LDBStore) tryAccessIdx(ikey []byte, po uint8, index *dpaDBIndex) (bool, chan struct{}) {
 	idata, err := s.db.Get(ikey)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	decodeIndex(idata, index)
 	oldGCIdxKey := getGCIdxKey(index)
 	s.batch.Put(keyAccessCnt, U64ToBytes(s.accessCnt))
-	s.accessCnt++
 	index.Access = s.accessCnt
 	idata = encodeIndex(index)
+	s.accessCnt++
 	s.batch.Put(ikey, idata)
 	newGCIdxKey := getGCIdxKey(index)
 	newGCIdxData := getGCIdxValue(index, po, ikey)
@@ -825,7 +837,7 @@ func (s *LDBStore) tryAccessIdx(ikey []byte, po uint8, index *dpaDBIndex) bool {
 	case s.batchesC <- struct{}{}:
 	default:
 	}
-	return true
+	return true, s.batch.c
 }
 
 // GetSchema is returning the current named schema of the datastore as read from LevelDB
@@ -871,7 +883,8 @@ func (s *LDBStore) get(addr Address) (chunk *chunk, err error) {
 		return nil, ErrDBClosed
 	}
 	proximity := s.po(addr)
-	if s.tryAccessIdx(getIndexKey(addr), proximity, &indx) {
+	found, _ := s.tryAccessIdx(getIndexKey(addr), proximity, &indx)
+	if found {
 		var data []byte
 		if s.getDataFunc != nil {
 			// if getDataFunc is defined, use it to retrieve the chunk data
