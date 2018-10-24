@@ -216,8 +216,8 @@ func TestSyncerWithPubSubOracle(t *testing.T) {
 }
 func TestSyncerWithPss(t *testing.T) {
 	nodeCnt := 32
-	chunkCnt := 10
-	trials := 10
+	chunkCnt := 1
+	trials := 1
 	psSyncerF := func(_ []byte, p *pss.Pss) PubSub {
 		return NewPss(p, false)
 	}

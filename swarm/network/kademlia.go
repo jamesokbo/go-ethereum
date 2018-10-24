@@ -450,10 +450,20 @@ func (k *Kademlia) neighbourhoodDepth() (depth int) {
 		return 0
 	}
 	var size int
+	var b bool
 	f := func(v pot.Val, i int) bool {
 		size++
-		depth = i
-		return size < k.MinProxBinSize
+
+		if size == k.MinProxBinSize {
+			b = true
+			depth = i
+			return true
+		}
+		if b && i < depth {
+			depth = i + 1
+			return false
+		}
+		return true
 	}
 	k.conns.EachNeighbour(k.base, pof, f)
 	return depth

@@ -177,7 +177,6 @@ func (s *storer) handleChunk(msg *chunkMsg, p *p2p.Peer) error {
 	select {
 	case s.proofC <- r:
 	case <-s.quitC:
-		close(s.proofC)
 	}
 	return nil
 }
