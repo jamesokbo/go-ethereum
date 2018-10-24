@@ -31,7 +31,7 @@ const (
 )
 
 var (
-	retryInterval = 120 * time.Second // seconds to wait before retry sync
+	retryInterval = 1 * time.Second // seconds to wait before retry sync
 )
 
 var (
@@ -169,6 +169,7 @@ func (db *DB) listen() {
 			batch.new++
 
 		case addr := <-db.receiptsC:
+			log.Warn("received receipt", "addr", label(addr[:]))
 			// consume receiptsC for removal
 			// potential duplicates
 			v, ok := db.waiting.Load(addr.Hex())

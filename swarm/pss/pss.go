@@ -379,7 +379,7 @@ func (p *Pss) handlePssMsg(ctx context.Context, msg interface{}) error {
 	var isRaw bool
 	if pssmsg.isRaw() {
 		if p.topicHandlerCaps[psstopic]&handlerCapRaw == 0 {
-			log.Debug("No handler for raw message", "topic", psstopic)
+			log.Debug("No handler for raw message", "topic", label(psstopic[:]))
 		}
 		isRaw = true
 	}
@@ -388,20 +388,24 @@ func (p *Pss) handlePssMsg(ctx context.Context, msg interface{}) error {
 	// - no prox handler on message and partial address matches
 	// - prox handler on message and we are in prox regardless of partial address match
 	// store this result so we don't calculate again on every handler
-	var isProx bool
-	var isRecipient bool
-	if p.isSelfPossibleRecipient(pssmsg, false) && p.topicHandlerCaps[psstopic]&handlerCapProx == 0 {
-		isRecipient = true
-	} else if p.isSelfPossibleRecipient(pssmsg, true) {
-		isRecipient = true
-		isProx = true
-	}
+	// var isProx bool
+	// var isRecipient bool
+	// if p.isSelfPossibleRecipient(pssmsg, false) && p.topicHandlerCaps[psstopic]&handlerCapProx == 0 {
+	// 	isRecipient = true
+	// } else if p.isSelfPossibleRecipient(pssmsg, true) {
+	// 	isRecipient = true
+	// 	isProx = true
+	// }
+	log.Warn("process", "topic", label(psstopic[:]))
+
+	isProx := p.topicHandlerCaps[psstopic]&handlerCapProx != 0
+	isRecipient := p.isSelfPossibleRecipient(pssmsg, isProx)
 	if !isRecipient {
-		log.Trace("pss was for someone else :'( ... forwarding", "pss", common.ToHex(p.BaseAddr()), "prox", isProx)
+		log.Warn("pss was for someone else :'( ... forwarding", "pss", common.ToHex(p.BaseAddr()), "prox", isProx)
 		return p.enqueue(pssmsg)
 	}
 
-	log.Trace("pss for us, yay! ... let's process!", "pss", common.ToHex(p.BaseAddr()), "prox", isProx)
+	log.Warn("pss for us, yay! ... let's process!", "pss", common.ToHex(p.BaseAddr()), "prox", isProx)
 	if err := p.process(pssmsg, isRaw, isProx); err != nil {
 		qerr := p.enqueue(pssmsg)
 		if qerr != nil {
@@ -469,6 +473,7 @@ func (p *Pss) executeHandlers(topic Topic, payload []byte, from *PssAddress, raw
 			log.Trace("noproxhandler")
 			continue
 		}
+		log.Warn("call handler", "topic", label(topic[:]))
 		err := (h.f)(payload, peer, asymmetric, keyid)
 		if err != nil {
 			log.Warn("Pss handler %p failed: %v", h.f, err)
@@ -867,6 +872,7 @@ func (p *Pss) forward(msg *PssMsg) error {
 	// send with kademlia
 	// find the closest peer to the recipient and attempt to send
 	sent := 0
+	log.Warn(p.Kademlia.String())
 	p.Kademlia.EachConn(to, 256, func(sp *network.Peer, po int, isproxbin bool) bool {
 		info := sp.Info()
 
@@ -884,7 +890,6 @@ func (p *Pss) forward(msg *PssMsg) error {
 		}
 
 		// get the protocol peer from the forwarding peer cache
-		sendMsg := fmt.Sprintf("MSG TO %x FROM %x VIA %x", to, p.BaseAddr(), sp.Address())
 		p.fwdPoolMu.RLock()
 		pp := p.fwdPool[sp.Info().ID]
 		p.fwdPoolMu.RUnlock()
@@ -897,17 +902,19 @@ func (p *Pss) forward(msg *PssMsg) error {
 			return true
 		}
 		sent++
-		log.Trace(fmt.Sprintf("%v: successfully forwarded", sendMsg))
+		powill, _ := p.Kademlia.Pof(sp.Address(), to, 0)
+		ponow, _ := p.Kademlia.Pof(p.BaseAddr(), to, 0)
+		log.Warn("forward", "topic", label(msg.Payload.Topic[:]), "self", label(p.BaseAddr()), "to", label(sp.Address()), "dest", label(to), "po now", ponow, "po will", powill)
 
 		// continue forwarding if:
 		// - if the peer is end recipient but the full address has not been disclosed
 		// - if the peer address matches the partial address fully
 		// - if the peer is in proxbin
-		if len(msg.To) < addressLength && bytes.Equal(msg.To, sp.Address()[:len(msg.To)]) {
-			log.Trace(fmt.Sprintf("Pss keep forwarding: Partial address + full partial match"))
-			return true
+		if bytes.Equal(msg.To, sp.Address()[:len(msg.To)]) {
+			log.Trace("Pss keep forwarding: Partial address + full partial match")
+			return len(msg.To) < addressLength
 		} else if isproxbin {
-			log.Trace(fmt.Sprintf("%x is in proxbin, keep forwarding", common.ToHex(sp.Address())))
+			log.Warn("peer in proxbin, keep forwarding", "peer", label(sp.Address()))
 			return true
 		}
 		// at this point we stop forwarding, and the state is as follows:
@@ -916,7 +923,7 @@ func (p *Pss) forward(msg *PssMsg) error {
 		// - partial addresses don't fully match
 		return false
 	})
-
+	log.Warn("sent to", "n", sent)
 	if sent == 0 {
 		log.Debug("unable to forward to any peers")
 		if err := p.enqueue(msg); err != nil {
@@ -929,6 +936,10 @@ func (p *Pss) forward(msg *PssMsg) error {
 	// cache the message
 	p.addFwdCache(msg)
 	return nil
+}
+
+func label(b []byte) string {
+	return fmt.Sprintf("%04x", b[:2])
 }
 
 /////////////////////////////////////////////////////////////////////

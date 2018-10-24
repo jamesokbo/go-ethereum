@@ -123,7 +123,6 @@ func (s *dispatcher) handleProof(msg *proofMsg, p *p2p.Peer) error {
 	select {
 	case s.receiptsC <- msg.Addr:
 	case <-s.quitC:
-		close(s.receiptsC)
 	}
 	return nil
 }

@@ -34,7 +34,6 @@ func NewPss(p *pss.Pss, prox bool) *Pss {
 
 func (p *Pss) Register(topic string, handler func(msg []byte, p *p2p.Peer) error) {
 	f := func(msg []byte, peer *p2p.Peer, _ bool, _ string) error {
-		log.Warn("Handler", "topic", topic)
 		return handler(msg, peer)
 	}
 	h := pss.NewHandler(f).WithRaw()
@@ -62,6 +61,7 @@ func (s *storer) withPubSub(ps PubSub) *storer {
 		if err != nil {
 			return err
 		}
+		log.Error("Handler", "chunk", label(chmsg.Addr), "origin", label(chmsg.Origin))
 		return s.handleChunk(&chmsg, p)
 	})
 
@@ -72,7 +72,7 @@ func (s *storer) withPubSub(ps PubSub) *storer {
 			if err != nil {
 				continue
 			}
-			log.Warn("send proof", "to", label(r.to))
+			log.Error("send proof", "addr", label(r.msg.Addr), "to", label(r.to))
 			err = ps.Send(r.to[:], pssProofTopic, msg)
 			if err != nil {
 				log.Warn("unable to send", "error", err)
@@ -96,6 +96,7 @@ func (s *dispatcher) withPubSub(ps PubSub) *dispatcher {
 		if err != nil {
 			return err
 		}
+		log.Error("Handler", "proof", label(prmsg.Addr), "self", label(s.baseAddr))
 		return s.handleProof(&prmsg, p)
 	})
 
@@ -107,6 +108,7 @@ func (s *dispatcher) withPubSub(ps PubSub) *dispatcher {
 			if err != nil {
 				continue
 			}
+			log.Error("send chunk", "addr", label(c.Addr), "self", label(s.baseAddr))
 			err = ps.Send(c.Addr[:], pssChunkTopic, msg)
 			if err != nil {
 				log.Warn("unable to send", "error", err)

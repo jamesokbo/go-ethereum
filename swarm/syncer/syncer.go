@@ -59,3 +59,8 @@ func (s *Syncer) Put(tagname string, chunk storage.Chunk) {
 func (s *Syncer) NewTag(name string, total int) (*Tag, error) {
 	return s.db.tags.New(name, total)
 }
+
+func (s *Syncer) Status(name string, state State) (int, int) {
+	v, _ := s.db.tags.tags.Load(name)
+	return v.(*Tag).Status(state)
+}

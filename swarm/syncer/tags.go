@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ethereum/go-ethereum/log"
 )
 
 var (
@@ -133,6 +135,8 @@ func (ts *tags) Get(s string, f State) int {
 
 // WaitTill blocks until count for the State reaches total cnt
 func (tg *Tag) WaitTill(ctx context.Context, s State) error {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case c := <-tg.State:
@@ -141,6 +145,8 @@ func (tg *Tag) WaitTill(ctx context.Context, s State) error {
 			}
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-ticker.C:
+			log.Error("Status", "SENT", tg.Get(SENT), "SYNCED", tg.Get(SYNCED))
 		}
 	}
 }
