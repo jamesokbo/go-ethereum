@@ -75,7 +75,6 @@ func (s *dispatcher) sendChunk(ch storage.Chunk) {
 	select {
 	case s.chunkC <- msg:
 	case <-s.quitC:
-		close(s.chunkC)
 	}
 }
 

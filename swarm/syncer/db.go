@@ -31,7 +31,7 @@ const (
 )
 
 var (
-	retryInterval = 3 * time.Second // seconds to wait before retry sync
+	retryInterval = 120 * time.Second // seconds to wait before retry sync
 )
 
 var (
@@ -182,6 +182,7 @@ func (db *DB) listen() {
 			if it.state == SYNCED {
 				continue
 			}
+			log.Warn("Synced", "addr", label(addr[:]))
 			it.state = SYNCED
 			db.tags.Inc(it.Tag, SYNCED)
 			batch.Delete(it.key)

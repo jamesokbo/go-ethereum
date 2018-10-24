@@ -75,6 +75,7 @@ func (p *prover) GetProof(data, challenge []byte) []byte {
 	if max > 32 {
 		max = 32
 	}
+	challenge = append(challenge, newChallenge()...)
 	return append(data[:max], challenge...)
 }
 

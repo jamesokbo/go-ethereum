@@ -1,8 +1,11 @@
 package syncer
 
 import (
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/swarm/pss"
 )
 
 //
@@ -15,6 +18,37 @@ var (
 type PubSub interface {
 	Register(topic string, handler func(msg []byte, p *p2p.Peer) error)
 	Send(to []byte, topic string, msg []byte) error
+}
+
+type Pss struct {
+	pss  *pss.Pss
+	prox bool
+}
+
+func NewPss(p *pss.Pss, prox bool) *Pss {
+	return &Pss{
+		pss:  p,
+		prox: prox,
+	}
+}
+
+func (p *Pss) Register(topic string, handler func(msg []byte, p *p2p.Peer) error) {
+	f := func(msg []byte, peer *p2p.Peer, _ bool, _ string) error {
+		log.Warn("Handler", "topic", topic)
+		return handler(msg, peer)
+	}
+	h := pss.NewHandler(f).WithRaw()
+	if p.prox {
+		h = h.WithProxBin()
+	}
+	pt := pss.BytesToTopic([]byte(topic))
+	p.pss.Register(&pt, h)
+}
+
+func (p *Pss) Send(to []byte, topic string, msg []byte) error {
+	pt := pss.BytesToTopic([]byte(topic))
+	log.Warn("Send", "topic", topic, "to", label(to))
+	return p.pss.SendRaw(pss.PssAddress(to), pt, msg)
 }
 
 // withPubSub plugs in PubSub to the storer to receive chunks and sending proofs
@@ -38,10 +72,18 @@ func (s *storer) withPubSub(ps PubSub) *storer {
 			if err != nil {
 				continue
 			}
-			ps.Send(r.to[:], pssProofTopic, msg)
+			log.Warn("send proof", "to", label(r.to))
+			err = ps.Send(r.to[:], pssProofTopic, msg)
+			if err != nil {
+				log.Warn("unable to send", "error", err)
+			}
 		}
 	}()
 	return s
+}
+
+func label(b []byte) string {
+	return hexutil.Encode(b[:2])
 }
 
 func (s *dispatcher) withPubSub(ps PubSub) *dispatcher {
@@ -65,7 +107,10 @@ func (s *dispatcher) withPubSub(ps PubSub) *dispatcher {
 			if err != nil {
 				continue
 			}
-			ps.Send(c.Addr[:], pssChunkTopic, msg)
+			err = ps.Send(c.Addr[:], pssChunkTopic, msg)
+			if err != nil {
+				log.Warn("unable to send", "error", err)
+			}
 		}
 	}()
 
