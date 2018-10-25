@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/swarm/api"
 	"github.com/ethereum/go-ethereum/swarm/log"
@@ -597,6 +598,14 @@ func (s *Server) HandleGetFeed(w http.ResponseWriter, r *http.Request) {
 
 	// All ok, serve the retrieved update
 	log.Debug("Found update", "feed", fd.Hex(), "ruid", ruid)
+	if r.URL.Query().Get("hex") == "1" {
+		encodedData := hexutil.Encode(data)
+		w.Header().Set("Content-Type", "text/plain")
+
+		fmt.Fprint(w, string(encodedData))
+		return
+
+	}
 	w.Header().Set("Content-Type", api.MimeOctetStream)
 	http.ServeContent(w, r, "", time.Now(), bytes.NewReader(data))
 }
