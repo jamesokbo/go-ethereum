@@ -17,6 +17,7 @@ var (
 
 // Tag represents info on the status of new chunks
 type Tag struct {
+	name      string
 	total     uint32     // total chunks belonging to a tag
 	split     uint32     // number of chunks already processed by splitter for hashing
 	stored    uint32     // number of chunks already stored locally
@@ -42,6 +43,7 @@ func newTags() *tags {
 // it returns an error if the tag with this name already exists
 func (ts *tags) New(s string, total int) (*Tag, error) {
 	t := &Tag{
+		name:      s,
 		startedAt: time.Now(),
 		total:     uint32(total),
 		State:     make(chan State, 5),
@@ -146,7 +148,7 @@ func (tg *Tag) WaitTill(ctx context.Context, s State) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			log.Error("Status", "SENT", tg.Get(SENT), "SYNCED", tg.Get(SYNCED))
+			log.Error("Status", "name", tg.name, "SENT", tg.Get(SENT), "SYNCED", tg.Get(SYNCED))
 		}
 	}
 }

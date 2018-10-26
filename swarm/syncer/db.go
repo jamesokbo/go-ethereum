@@ -31,7 +31,7 @@ const (
 )
 
 var (
-	retryInterval = 1 * time.Second // seconds to wait before retry sync
+	retryInterval = 30 * time.Second // seconds to wait before retry sync
 )
 
 var (

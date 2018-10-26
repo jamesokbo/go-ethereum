@@ -216,7 +216,7 @@ func TestSyncerWithPubSubOracle(t *testing.T) {
 }
 func TestSyncerWithPss(t *testing.T) {
 	nodeCnt := 32
-	chunkCnt := 20
+	chunkCnt := 1
 	trials := 1
 	psSyncerF := func(_ []byte, p *pss.Pss) PubSub {
 		return NewPss(p, false)
@@ -265,7 +265,8 @@ func testSyncerWithPubSub(nodeCnt, chunkCnt, trials int, sf simulation.ServiceFu
 				u, d := choose2(nodeCnt)
 				uid := sim.UpNodeIDs()[u]
 				syncer, _ := sim.NodeItem(uid, bucketKeySyncer)
-				tagname := fmt.Sprintf("tag-%v-%d", u, i)
+				did := sim.UpNodeIDs()[d]
+				tagname := fmt.Sprintf("tag-%v-%v-%d", label(uid[:]), label(did[:]), i)
 				log.Error("uploading", "peer", uid, "chunks", chunkCnt, "tagname", tagname)
 				what, err := upload(ctx, syncer.(*Syncer), tagname, chunkCnt)
 				if err != nil {
@@ -275,7 +276,6 @@ func testSyncerWithPubSub(nodeCnt, chunkCnt, trials int, sf simulation.ServiceFu
 					}
 					return
 				}
-				did := sim.UpNodeIDs()[d]
 				log.Error("synced", "peer", did, "chunks", chunkCnt, "tagname", tagname)
 				log.Error("downloading", "peer", did, "chunks", chunkCnt, "tagname", tagname)
 
@@ -305,6 +305,7 @@ func testSyncerWithPubSub(nodeCnt, chunkCnt, trials int, sf simulation.ServiceFu
 	if result.Error != nil {
 		return fmt.Errorf("simulation error: %v", result.Error)
 	}
+	log.Error("PASS")
 	return nil
 }
 
@@ -376,9 +377,9 @@ func newServiceFunc(psSyncer, psStorer func([]byte, *pss.Pss) PubSub) func(ctx *
 		cleanup = func() {
 			syn.Close()
 			st.close()
+			netStore.Close()
 			os.RemoveAll(datadir)
 			os.RemoveAll(dbpath)
-			netStore.Close()
 			r.Close()
 		}
 

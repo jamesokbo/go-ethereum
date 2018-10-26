@@ -1,4 +1,4 @@
-package syncer
+	package syncer
 
 import (
 	"github.com/ethereum/go-ethereum/common/hexutil"

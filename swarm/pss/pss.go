@@ -358,12 +358,11 @@ func (p *Pss) getHandlers(topic Topic) map[*handler]bool {
 // Only passes error to pss protocol handler if payload is not valid pssmsg
 func (p *Pss) handlePssMsg(ctx context.Context, msg interface{}) error {
 	metrics.GetOrRegisterCounter("pss.handlepssmsg", nil).Inc(1)
-	log.Warn("handler", "self", label(p.Kademlia.BaseAddr()))
 	pssmsg, ok := msg.(*PssMsg)
-
 	if !ok {
 		return fmt.Errorf("invalid message type. Expected *PssMsg, got %T ", msg)
 	}
+	log.Warn("handler", "self", label(p.Kademlia.BaseAddr()), "topic", label(pssmsg.Payload.Topic[:]))
 	if int64(pssmsg.Expire) < time.Now().Unix() {
 		metrics.GetOrRegisterCounter("pss.expire", nil).Inc(1)
 		log.Warn("pss filtered expired message", "from", common.ToHex(p.Kademlia.BaseAddr()), "to", common.ToHex(pssmsg.To))
@@ -390,27 +389,27 @@ func (p *Pss) handlePssMsg(ctx context.Context, msg interface{}) error {
 	// - no prox handler on message and partial address matches
 	// - prox handler on message and we are in prox regardless of partial address match
 	// store this result so we don't calculate again on every handler
-	// var isProx bool
-	// var isRecipient bool
-	// if p.isSelfPossibleRecipient(pssmsg, false) && p.topicHandlerCaps[psstopic]&handlerCapProx == 0 {
-	// 	isRecipient = true
-	// } else if p.isSelfPossibleRecipient(pssmsg, true) {
-	// 	isRecipient = true
-	// 	isProx = true
-	// }
-	isProx := p.topicHandlerCaps[psstopic]&handlerCapProx != 0
-	isRecipient := p.isSelfPossibleRecipient(pssmsg, isProx)
+	var isProx bool
+	var isRecipient bool
+	if p.isSelfPossibleRecipient(pssmsg, false) && p.topicHandlerCaps[psstopic]&handlerCapProx == 0 {
+		isRecipient = true
+	} else if p.isSelfPossibleRecipient(pssmsg, true) {
+		isRecipient = true
+		isProx = true
+	}
+	// isProx := p.topicHandlerCaps[psstopic]&handlerCapProx != 0
+	// isRecipient := p.isSelfPossibleRecipient(pssmsg, isProx)
 	if !isRecipient {
 		log.Warn("pss was for someone else :'( ... forwarding", "pss", common.ToHex(p.BaseAddr()), "prox", isProx)
 		return p.enqueue(pssmsg)
 	}
 
-	log.Warn("pss for us, yay! ... let's process!", "pss", common.ToHex(p.BaseAddr()), "prox", isProx)
+	log.Warn("pss for us, yay! ... let's process!", "pss", common.ToHex(p.BaseAddr()), "prox", isProx, "topic", label(pssmsg.Payload.Topic[:]))
 	if err := p.process(pssmsg, isRaw, isProx); err != nil {
-		qerr := p.enqueue(pssmsg)
-		if qerr != nil {
-			return fmt.Errorf("process fail: processerr %v, queueerr: %v", err, qerr)
-		}
+		// qerr := p.enqueue(pssmsg)
+		// if qerr != nil {
+		// 	return fmt.Errorf("process fail: processerr %v, queueerr: %v", err, qerr)
+		// }
 	}
 	return nil
 
@@ -871,9 +870,15 @@ func (p *Pss) forward(msg *PssMsg) error {
 	// send with kademlia
 	// find the closest peer to the recipient and attempt to send
 	sent := 0
-	p.Kademlia.EachConn(to, 256, func(sp *network.Peer, po int, isproxbin bool) bool {
-		info := sp.Info()
+	ponow, _ := p.Kademlia.Pof(p.BaseAddr(), to, 0)
+	depth := 0
 
+	p.Kademlia.EachConn(to, addressLength*8, func(sp *network.Peer, po int, isproxbin bool) bool {
+		info := sp.Info()
+		// end if we were broadcasting within the neighbouhood of depth
+		if po < depth {
+			return false
+		}
 		// check if the peer is running pss
 		var ispss bool
 		for _, cap := range info.Caps {
@@ -892,6 +897,10 @@ func (p *Pss) forward(msg *PssMsg) error {
 		pp := p.fwdPool[sp.Info().ID]
 		p.fwdPoolMu.RUnlock()
 
+		powill, _ := p.Kademlia.Pof(sp.Address(), to, 0)
+		log.Warn("forward", "topic", label(msg.Payload.Topic[:]), "self", label(p.BaseAddr()), "to", label(sp.Address()), "dest", label(to), "po", ponow, "advance", powill-ponow)
+		println(p.Kademlia.String())
+
 		// attempt to send the message
 		err := pp.Send(context.TODO(), msg)
 		if err != nil {
@@ -900,29 +909,34 @@ func (p *Pss) forward(msg *PssMsg) error {
 			return true
 		}
 		sent++
-		{
-			powill, _ := p.Kademlia.Pof(sp.Address(), to, 0)
-			ponow, _ := p.Kademlia.Pof(p.BaseAddr(), to, 0)
-			log.Warn("forward", "topic", label(msg.Payload.Topic[:]), "self", label(p.BaseAddr()), "to", label(sp.Address()), "dest", label(to), "po now", ponow, "po will", powill)
-			println(p.Kademlia.String())
-		}
 
 		// continue forwarding if:
 		// - if the peer is end recipient but the full address has not been disclosed
 		// - if the peer address matches the partial address fully
 		// - if the peer is in proxbin
-		if len(msg.To) < addressLength && bytes.Equal(msg.To, sp.Address()[:len(msg.To)]) {
-			log.Trace(fmt.Sprintf("Pss keep forwarding: Partial address + full partial match"))
-			return true
-		} else if isproxbin {
-			log.Trace(fmt.Sprintf("%x is in proxbin, keep forwarding", common.ToHex(sp.Address())))
-			return true
-		}
+		// if len(msg.To) < addressLength && bytes.Equal(msg.To, sp.Address()[:len(msg.To)]) {
+		// 	log.Trace(fmt.Sprintf("Pss keep forwarding: Partial address + full partial match"))
+		// 	return true
+		// } else if isproxbin {
+		// 	log.Trace(fmt.Sprintf("%x is in proxbin, keep forwarding", common.ToHex(sp.Address())))
+		// 	return true
+		// }
 		// at this point we stop forwarding, and the state is as follows:
-		// - the peer is end recipient and we have full address
 		// - we are not in proxbin (directed routing)
 		// - partial addresses don't fully match
-		return false
+		// return false
+		// - the peer is end recipient and we have full address
+		if po >= addressLength*8 {
+			return false
+		}
+		if sent == 1 {
+			depth = p.Kademlia.NeighbourhoodDepth()
+			darkRadius := len(msg.To) * 8
+			if darkRadius < addressLength*8 && depth > darkRadius {
+				depth = darkRadius
+			}
+		}
+		return true
 	})
 
 	if sent == 0 {

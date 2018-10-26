@@ -35,6 +35,7 @@ type HashWithLength struct {
 	hash.Hash
 }
 
+// TODO make sure calling Reset() fails proactively
 func (h *HashWithLength) ResetWithLength(length []byte) {
 	h.Reset()
 	h.Write(length)
