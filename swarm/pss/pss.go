@@ -23,11 +23,13 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"hash"
 	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/sha3"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -184,7 +186,7 @@ func NewPss(k *network.Kademlia, params *PssParams) (*Pss, error) {
 		topicHandlerCaps: make(map[Topic]byte),
 		hashPool: sync.Pool{
 			New: func() interface{} {
-				return storage.MakeHashFunc(storage.DefaultHash)()
+				return sha3.NewKeccak256()
 			},
 		},
 	}
@@ -356,7 +358,7 @@ func (p *Pss) getHandlers(topic Topic) map[*handler]bool {
 // Only passes error to pss protocol handler if payload is not valid pssmsg
 func (p *Pss) handlePssMsg(ctx context.Context, msg interface{}) error {
 	metrics.GetOrRegisterCounter("pss.handlepssmsg", nil).Inc(1)
-
+	log.Warn("handler", "self", label(p.Kademlia.BaseAddr()))
 	pssmsg, ok := msg.(*PssMsg)
 
 	if !ok {
@@ -379,7 +381,7 @@ func (p *Pss) handlePssMsg(ctx context.Context, msg interface{}) error {
 	var isRaw bool
 	if pssmsg.isRaw() {
 		if p.topicHandlerCaps[psstopic]&handlerCapRaw == 0 {
-			log.Debug("No handler for raw message", "topic", label(psstopic[:]))
+			log.Debug("No handler for raw message", "topic", psstopic)
 		}
 		isRaw = true
 	}
@@ -396,8 +398,6 @@ func (p *Pss) handlePssMsg(ctx context.Context, msg interface{}) error {
 	// 	isRecipient = true
 	// 	isProx = true
 	// }
-	log.Warn("process", "topic", label(psstopic[:]))
-
 	isProx := p.topicHandlerCaps[psstopic]&handlerCapProx != 0
 	isRecipient := p.isSelfPossibleRecipient(pssmsg, isProx)
 	if !isRecipient {
@@ -473,10 +473,9 @@ func (p *Pss) executeHandlers(topic Topic, payload []byte, from *PssAddress, raw
 			log.Trace("noproxhandler")
 			continue
 		}
-		log.Warn("call handler", "topic", label(topic[:]))
 		err := (h.f)(payload, peer, asymmetric, keyid)
 		if err != nil {
-			log.Warn("Pss handler %p failed: %v", h.f, err)
+			log.Warn("Pss handler failed", "err", err)
 		}
 	}
 }
@@ -755,7 +754,7 @@ func (p *Pss) SendRaw(address PssAddress, topic Topic, msg []byte) error {
 	pssMsg.To = address
 	pssMsg.Expire = uint32(time.Now().Add(p.msgTTL).Unix())
 	pssMsg.Payload = payload
-	p.addFwdCache(pssMsg)
+	//p.addFwdCache(pssMsg)
 	return p.enqueue(pssMsg)
 }
 
@@ -872,7 +871,6 @@ func (p *Pss) forward(msg *PssMsg) error {
 	// send with kademlia
 	// find the closest peer to the recipient and attempt to send
 	sent := 0
-	log.Warn(p.Kademlia.String())
 	p.Kademlia.EachConn(to, 256, func(sp *network.Peer, po int, isproxbin bool) bool {
 		info := sp.Info()
 
@@ -902,19 +900,22 @@ func (p *Pss) forward(msg *PssMsg) error {
 			return true
 		}
 		sent++
-		powill, _ := p.Kademlia.Pof(sp.Address(), to, 0)
-		ponow, _ := p.Kademlia.Pof(p.BaseAddr(), to, 0)
-		log.Warn("forward", "topic", label(msg.Payload.Topic[:]), "self", label(p.BaseAddr()), "to", label(sp.Address()), "dest", label(to), "po now", ponow, "po will", powill)
+		{
+			powill, _ := p.Kademlia.Pof(sp.Address(), to, 0)
+			ponow, _ := p.Kademlia.Pof(p.BaseAddr(), to, 0)
+			log.Warn("forward", "topic", label(msg.Payload.Topic[:]), "self", label(p.BaseAddr()), "to", label(sp.Address()), "dest", label(to), "po now", ponow, "po will", powill)
+			println(p.Kademlia.String())
+		}
 
 		// continue forwarding if:
 		// - if the peer is end recipient but the full address has not been disclosed
 		// - if the peer address matches the partial address fully
 		// - if the peer is in proxbin
-		if bytes.Equal(msg.To, sp.Address()[:len(msg.To)]) {
-			log.Trace("Pss keep forwarding: Partial address + full partial match")
-			return len(msg.To) < addressLength
+		if len(msg.To) < addressLength && bytes.Equal(msg.To, sp.Address()[:len(msg.To)]) {
+			log.Trace(fmt.Sprintf("Pss keep forwarding: Partial address + full partial match"))
+			return true
 		} else if isproxbin {
-			log.Warn("peer in proxbin, keep forwarding", "peer", label(sp.Address()))
+			log.Trace(fmt.Sprintf("%x is in proxbin, keep forwarding", common.ToHex(sp.Address())))
 			return true
 		}
 		// at this point we stop forwarding, and the state is as follows:
@@ -923,7 +924,7 @@ func (p *Pss) forward(msg *PssMsg) error {
 		// - partial addresses don't fully match
 		return false
 	})
-	log.Warn("sent to", "n", sent)
+
 	if sent == 0 {
 		log.Debug("unable to forward to any peers")
 		if err := p.enqueue(msg); err != nil {
@@ -936,10 +937,6 @@ func (p *Pss) forward(msg *PssMsg) error {
 	// cache the message
 	p.addFwdCache(msg)
 	return nil
-}
-
-func label(b []byte) string {
-	return fmt.Sprintf("%04x", b[:2])
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -958,6 +955,10 @@ func (p *Pss) cleanFwdCache() {
 	}
 }
 
+func label(b []byte) string {
+	return fmt.Sprintf("%04x", b[:2])
+}
+
 // add a message to the cache
 func (p *Pss) addFwdCache(msg *PssMsg) error {
 	metrics.GetOrRegisterCounter("pss.addfwdcache", nil).Inc(1)
@@ -969,6 +970,7 @@ func (p *Pss) addFwdCache(msg *PssMsg) error {
 	defer p.fwdCacheMu.Unlock()
 
 	digest := p.digest(msg)
+	//log.Error("addFwdCache", "self", label(p.Kademlia.BaseAddr()), "hash", label([]byte(digest[:])), "serialized", label(serialized))
 	if entry, ok = p.fwdCache[digest]; !ok {
 		entry = pssCacheEntry{}
 	}
@@ -997,10 +999,14 @@ func (p *Pss) checkFwdCache(msg *PssMsg) bool {
 
 // Digest of message
 func (p *Pss) digest(msg *PssMsg) pssDigest {
-	hasher := p.hashPool.Get().(storage.SwarmHash)
+	return p.digestBytes(msg.serialize())
+}
+
+func (p *Pss) digestBytes(msg []byte) pssDigest {
+	hasher := p.hashPool.Get().(hash.Hash)
 	defer p.hashPool.Put(hasher)
 	hasher.Reset()
-	hasher.Write(msg.serialize())
+	hasher.Write(msg)
 	digest := pssDigest{}
 	key := hasher.Sum(nil)
 	copy(digest[:], key[:digestLength])

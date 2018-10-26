@@ -149,19 +149,22 @@ func (msg *PssMsg) isSym() bool {
 
 // serializes the message for use in cache
 func (msg *PssMsg) serialize() []byte {
-	rlpdata, _ := rlp.EncodeToBytes(struct {
+	rlpdata, err := rlp.EncodeToBytes(struct {
 		To      []byte
 		Payload *whisper.Envelope
 	}{
 		To:      msg.To,
 		Payload: msg.Payload,
 	})
+	if err != nil {
+		panic(err.Error())
+	}
 	return rlpdata
 }
 
 // String representation of PssMsg
 func (msg *PssMsg) String() string {
-	return fmt.Sprintf("PssMsg: Recipient: %x", common.ToHex(msg.To))
+	return fmt.Sprintf("PssMsg: Recipient: %v", common.ToHex(msg.To))
 }
 
 // Signature for a message handler function for a PssMsg
