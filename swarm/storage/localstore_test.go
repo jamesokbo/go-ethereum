@@ -146,13 +146,13 @@ func put(store *LocalStore, n int, f func(i int64) Chunk) (hs []Address, errs []
 	return hs, errs
 }
 
-// TestGetFrequentlyAccessedChunkWontGetGarbageCollected tests that the most
+// TestGetRecentlyAccessedChunksWontGetGarbageCollected tests that the most
 // frequently accessed chunk is not garbage collected from LDBStore, i.e.,
 // from disk when we are at the capacity and garbage collector runs. For that
 // we start putting random chunks into the DB while continuously accessing the
 // chunk we care about then check if we can still retrieve it from disk.
-func TestGetFrequentlyAccessedChunkWontGetGarbageCollected(t *testing.T) {
-	ldbCap := 10
+func TestGetRecentlyAccessedChunksWontGetGarbageCollected(t *testing.T) {
+	ldbCap := 100
 	store, cleanup := setupLocalStore(t, ldbCap)
 	defer cleanup()
 
@@ -161,22 +161,35 @@ func TestGetFrequentlyAccessedChunkWontGetGarbageCollected(t *testing.T) {
 		chunks = append(chunks, GenerateRandomChunk(ch.DefaultSize))
 	}
 
-	mostAccessed := chunks[0].Address()
-	for _, chunk := range chunks {
+	recentlyAccessed := chunks[0]
+	if err := store.Put(context.Background(), recentlyAccessed); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			store.Get(context.Background(), recentlyAccessed.Address())
+			time.Sleep(1 * time.Nanosecond)
+		}
+	}()
+
+	for _, chunk := range chunks[1 : ldbCap-1] {
 		if err := store.Put(context.Background(), chunk); err != nil {
 			t.Fatal(err)
 		}
-
-		if _, err := store.Get(context.Background(), mostAccessed); err != nil {
-			t.Fatal(err)
-		}
-		// Add time for MarkAccessed() to be able to finish in a separate Goroutine
-		time.Sleep(100 * time.Microsecond)
+		time.Sleep(1 * time.Nanosecond)
 	}
 
+	store.DbStore.writeCurrentBatch()
+	if err := store.Put(context.Background(), chunks[len(chunks)-1]); err != nil {
+		t.Fatal(err)
+	}
+	store.DbStore.writeCurrentBatch()
+	//store.DbStore.collectGarbage()
+
 	store.DbStore.collectGarbage()
-	if _, err := store.DbStore.Get(context.Background(), mostAccessed); err != nil {
-		t.Logf("most frequntly accessed chunk not found on disk (key: %v)", mostAccessed)
+	addr := recentlyAccessed.Address()
+	if _, err := store.DbStore.Get(context.Background(), addr); err != nil {
+		t.Logf("most frequntly accessed chunk not found on disk (key: %v)", addr)
 		t.Fatal(err)
 	}
 
