@@ -119,6 +119,7 @@ func (ls *LocalStore) Put(ctx context.Context, chunk Chunk) error {
 	log.Trace("localstore.put", "key", chunk.Address())
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
+	log.Error("Put")
 
 	_, err := ls.memStore.Get(ctx, chunk.Address())
 	if err == nil {

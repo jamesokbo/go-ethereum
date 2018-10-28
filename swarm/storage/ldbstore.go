@@ -200,6 +200,8 @@ func (s *LDBStore) MarkAccessed(addr Address) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
+	log.Error("Mark accessed")
+
 	if s.closed {
 		return
 	}
@@ -372,7 +374,7 @@ func (s *LDBStore) collectGarbage() error {
 			s.delete(s.gc.batch.Batch, index, keyIdx, po)
 			singleIterationCount++
 			s.gc.count++
-			log.Trace("garbage collect deleted chunk", "key", hash)
+			log.Error("garbage collect deleted chunk", "key", hash, "gciter", s.gc.count)
 
 			// break if target is not on max garbage batch boundary
 			if s.gc.count >= s.gc.target {
@@ -770,6 +772,7 @@ func (s *LDBStore) writeBatches() {
 func (s *LDBStore) writeCurrentBatch() error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	log.Error("writeCurrentBatch")
 	b := s.batch
 	l := b.Len()
 	if l == 0 {
