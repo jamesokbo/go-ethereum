@@ -129,11 +129,8 @@ func TestMarkAccessed(t *testing.T) {
 		t.Fatalf("Expected the access index to be %d, but it is %d", 0, indx.Access)
 	}
 
-	found, c := db.MarkAccessed(addr)
-	if !found {
-		t.Fatal("Expected hash to be in db, but not found")
-	}
-	<-c
+	db.MarkAccessed(addr)
+	db.writeCurrentBatch()
 
 	idata, err = db.db.Get(idxk)
 	if err != nil {

@@ -194,19 +194,19 @@ func NewLDBStore(params *LDBStoreParams) (s *LDBStore, err error) {
 	return s, nil
 }
 
-// MarkAccessed increments the access counter for a chunk, so
+// MarkAccessed increments the access counter as a best effort for a chunk, so
 // the chunk won't get garbage collected.
-func (s *LDBStore) MarkAccessed(addr Address) (bool, chan struct{}) {
+func (s *LDBStore) MarkAccessed(addr Address) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
 	if s.closed {
-		return false, nil
+		return
 	}
 
 	var indx dpaDBIndex
 	proximity := s.po(addr)
-	return s.tryAccessIdx(getIndexKey(addr), proximity, &indx)
+	s.tryAccessIdx(getIndexKey(addr), proximity, &indx)
 }
 
 // initialize and set values for processing of gc round
@@ -817,10 +817,10 @@ func newMockEncodeDataFunc(mockStore *mock.NodeStore) func(chunk Chunk) []byte {
 }
 
 // try to find index; if found, update access cnt and return true
-func (s *LDBStore) tryAccessIdx(ikey []byte, po uint8, index *dpaDBIndex) (bool, chan struct{}) {
+func (s *LDBStore) tryAccessIdx(ikey []byte, po uint8, index *dpaDBIndex) bool {
 	idata, err := s.db.Get(ikey)
 	if err != nil {
-		return false, nil
+		return false
 	}
 	decodeIndex(idata, index)
 	oldGCIdxKey := getGCIdxKey(index)
@@ -837,7 +837,7 @@ func (s *LDBStore) tryAccessIdx(ikey []byte, po uint8, index *dpaDBIndex) (bool,
 	case s.batchesC <- struct{}{}:
 	default:
 	}
-	return true, s.batch.c
+	return true
 }
 
 // GetSchema is returning the current named schema of the datastore as read from LevelDB
@@ -883,7 +883,7 @@ func (s *LDBStore) get(addr Address) (chunk *chunk, err error) {
 		return nil, ErrDBClosed
 	}
 	proximity := s.po(addr)
-	found, _ := s.tryAccessIdx(getIndexKey(addr), proximity, &indx)
+	found := s.tryAccessIdx(getIndexKey(addr), proximity, &indx)
 	if found {
 		var data []byte
 		if s.getDataFunc != nil {
