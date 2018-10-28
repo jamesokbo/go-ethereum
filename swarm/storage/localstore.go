@@ -140,7 +140,6 @@ func (ls *LocalStore) Put(ctx context.Context, chunk Chunk) error {
 func (ls *LocalStore) Get(ctx context.Context, addr Address) (chunk Chunk, err error) {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
-
 	return ls.get(ctx, addr)
 }
 

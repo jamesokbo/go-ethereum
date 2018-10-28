@@ -302,7 +302,10 @@ func parseGCIdxEntry(accessCnt []byte, val []byte) (index *dpaDBIndex, po uint8,
 		Access: binary.BigEndian.Uint64(accessCnt),
 	}
 	po = val[0]
-	addr = val[9:]
+	addr = make([]byte, 32)
+	copy(addr, val[9:])
+
+	//addr = val[9:]
 	return
 }
 
@@ -349,12 +352,12 @@ func (s *LDBStore) collectGarbage() error {
 
 	var totalDeleted int
 	for s.gc.count < s.gc.target {
+		s.lock.Lock()
 		it := s.db.NewIterator()
 		ok := it.Seek([]byte{keyGCIdx})
 		var singleIterationCount int
 
 		// every batch needs a lock so we avoid entries changing accessidx in the meantime
-		s.lock.Lock()
 		for ; ok && (singleIterationCount < s.gc.maxBatch); ok = it.Next() {
 
 			// quit if no more access index keys
@@ -382,7 +385,10 @@ func (s *LDBStore) collectGarbage() error {
 			}
 		}
 
-		s.writeBatch(s.gc.batch, wEntryCnt)
+		if err := s.writeBatch(s.gc.batch, wEntryCnt); err != nil {
+			// TODO: it really happens...
+			panic(err)
+		}
 		s.lock.Unlock()
 		it.Release()
 		log.Trace("garbage collect batch done", "batch", singleIterationCount, "total", s.gc.count)
@@ -662,11 +668,11 @@ func (s *LDBStore) delete(batch *leveldb.Batch, idx *dpaDBIndex, idxKey []byte, 
 	batch.Delete(idxKey)
 	s.entryCnt--
 	dbEntryCount.Dec(1)
-	cntKey := make([]byte, 2)
-	cntKey[0] = keyDistanceCnt
-	cntKey[1] = po
-	batch.Put(keyEntryCnt, U64ToBytes(s.entryCnt))
-	batch.Put(cntKey, U64ToBytes(s.bucketCnt[po]))
+	//cntKey := make([]byte, 2)
+	//cntKey[0] = keyDistanceCnt
+	//cntKey[1] = po
+	//batch.Put(keyEntryCnt, U64ToBytes(s.entryCnt))
+	//batch.Put(cntKey, U64ToBytes(s.bucketCnt[po]))
 }
 
 func (s *LDBStore) BinIndex(po uint8) uint64 {
@@ -833,7 +839,7 @@ func (s *LDBStore) tryAccessIdx(ikey []byte, po uint8, index *dpaDBIndex) bool {
 	s.accessCnt++
 	s.batch.Put(ikey, idata)
 	newGCIdxKey := getGCIdxKey(index)
-	newGCIdxData := getGCIdxValue(index, po, ikey)
+	newGCIdxData := getGCIdxValue(index, po, ikey[1:])
 	s.batch.Delete(oldGCIdxKey)
 	s.batch.Put(newGCIdxKey, newGCIdxData)
 	select {
